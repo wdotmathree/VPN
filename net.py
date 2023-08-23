@@ -21,4 +21,3 @@ while True:
 		start = 54
 		proto = buf[20]
 	else: continue
-	

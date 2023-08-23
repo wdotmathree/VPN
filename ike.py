@@ -1,13 +1,12 @@
 # Very bad IKEv2 server implementation
 
 from random import randint
-from socket import socket, AF_INET6, SOCK_DGRAM, IPPROTO_UDP
+from socket import socket, AF_INET6, SOCK_DGRAM
 from struct import pack, unpack, pack_into, unpack_from
 from threading import Thread
 from time import sleep
 
 import os
-import typing
 
 # Exchange types
 IKE_SA_INIT = 34
@@ -27,7 +26,7 @@ DH_P = 0xffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74020bbea
 s = socket(AF_INET6, SOCK_DGRAM)
 s.bind(("::", 5000 if os.getuid() else 500))
 
-thing: typing.Dict[bytes, typing.Tuple[typing.List[bytes]]] = {}
+thing: dict[bytes, tuple[list[bytes]]] = {}
 
 def recv(id):
 	while len(thing[id][0]) == 0:
@@ -75,12 +74,10 @@ def handle(id):
 			if type == IKEV2_PAYLOAD_KE:
 				grp, = unpack_from("!H", buf, 0)
 				if grp != 14:
-					notify(id, IKE_SA_INIT, mid, IKEV2_NOTIFY_INVALID_KE_PAYLOAD, b'\x00\x0e')
+					notify(id, IKE_SA_INIT, mid, IKEV2_NOTIFY_INVALID_KE_PAYLOAD, b'\x00\x0e') # We accept group 14
 					redo = True
 					break
 		if redo: continue
-		print("finished")
-				
 
 if __name__ == "__main__":
 	while True:
