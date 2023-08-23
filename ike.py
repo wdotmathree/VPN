@@ -8,6 +8,8 @@ from time import sleep
 
 import os
 
+from classes import *
+
 # Exchange types
 IKE_SA_INIT = 34
 
@@ -15,6 +17,7 @@ IKE_SA_INIT = 34
 IKEV2_PAYLOAD_SA = 33
 IKEV2_PAYLOAD_KE = 34
 IKEV2_PAYLOAD_NONCE = 40
+IKEV2_PAYLOAD_NOTIFY = 41
 
 # Notification types
 IKEV2_NOTIFY_INVALID_KE_PAYLOAD = 17
@@ -48,17 +51,10 @@ def packetize(buf):
 	return exchange, mid, packets
 
 def notify(id, exchange, mid, type, msg):
-	buf = bytearray(id)
-	buf += b'\x29\x20' # Next payload: notify, version: 2.0
-	buf += pack("!B", exchange)
-	buf += b'\x20' # Flags: response
-	buf += pack("!LL", mid, 0xAAAAAAAA) # Message ID, Length: placeholder
-	buf += b'\x00\x00\xAA\xAA\x00\x00' # Next payload: none, critical: no, payload length: placeholder
-	buf += pack("!H", type) # Notification type
-	buf += msg # Notification data
-	pack_into("!L", buf, 24, len(buf))
-	pack_into("!H", buf, 30, len(buf) - 28)
-	s.sendto(buf, thing[id][1])
+	d = b'\x00\x00' + pack("!H", type) + msg # Notify payload + notification data
+	p = Payload(IKEV2_PAYLOAD_NOTIFY, [Raw(d)]) # Notify payload + header
+	msg = Message(id, exchange, mid, True, False, [p]).build() # Message header + notify payload
+	s.sendto(msg, thing[id][1])
 
 def handle(id):
 	redo = True
@@ -71,7 +67,9 @@ def handle(id):
 			return
 		k = None
 		for type, buf in messages:
-			if type == IKEV2_PAYLOAD_KE:
+			if type == IKEV2_PAYLOAD_SA:
+				pass
+			elif type == IKEV2_PAYLOAD_KE:
 				grp, = unpack_from("!H", buf, 0)
 				if grp != 14:
 					notify(id, IKE_SA_INIT, mid, IKEV2_NOTIFY_INVALID_KE_PAYLOAD, b'\x00\x0e') # We accept group 14

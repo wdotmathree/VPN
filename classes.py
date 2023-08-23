@@ -1,9 +1,8 @@
 from struct import pack, pack_into
 
 class Payload:
-	def __init__(self, type: int, critical: bool, children: list["Payload"]):
+	def __init__(self, type: int, children: list["Payload"]):
 		self.type = type
-		self.critical = critical
 		self.children = children
 		self.stale = True
 
@@ -14,7 +13,7 @@ class Payload:
 		buf = pack(
 			"!BBH",
 			nextid,
-			self.critical << 7,
+			0, # Critical bit is never set
 			0xAAAA # Length placeholder
 		)
 		buf = bytearray(buf)
@@ -32,7 +31,7 @@ class Raw(Payload):
 	def __init__(self, data: bytes):
 		self.data = data
 
-	def build(self, nextid):
+	def build(self, nextid, curidx):
 		assert nextid == 0
 		return self.data
 
