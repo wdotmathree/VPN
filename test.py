@@ -43,4 +43,11 @@ b"\x15\xe9\x20\x0b\x29\x00\x00\x10\x00\x00\x40\x2f\x00\x02\x00\x03" \
 b"\x00\x04\x00\x05\x00\x00\x00\x08\x00\x00\x40\x16"
 
 c = classes.Message.parse(b)
+print(b)
 print(c.build())
+print(b == c.build())
+
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.sendto(b, ("192.168.0.1", 500))
+s.sendto(c.build(), ("192.168.0.1", 500))

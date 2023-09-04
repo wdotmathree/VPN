@@ -83,12 +83,13 @@ class Proposal(Payload):
 			return self.buf
 
 		buf = pack(
-			"!BxHBBB",
+			"!BxHBBBB",
 			nextid,
 			0xAAAA, # Length placeholder
 			self.num,
 			self.protocol,
-			0x00 # SPI size
+			0x00, # SPI size
+			len(self.children) # Number of transforms
 		)
 		buf = bytearray(buf)
 		for i, c in enumerate(self.children):
@@ -107,8 +108,8 @@ class Proposal(Payload):
 
 
 class Transform(Payload):
-	def __init__(self, type: int, id: int, attributes: list["Attribute"]):
-		self.type = type
+	def __init__(self, transtype: int, id: int, attributes: list["Attribute"]):
+		self.transtype = transtype
 		self.id = id
 		super().__init__(IKEV2_SUB_TRANSFORM, attributes)
 	
@@ -120,10 +121,12 @@ class Transform(Payload):
 			"!BxHBxH",
 			nextid,
 			0xAAAA, # Length placeholder
-			self.type,
+			self.transtype,
 			self.id
 		)
 		buf = bytearray(buf)
+		for c in self.children:
+			buf += c.build()
 		pack_into("!H", buf, 2, len(buf))
 		buf = bytes(buf)
 
@@ -133,8 +136,73 @@ class Transform(Payload):
 
 	@classmethod
 	def parse(cls, buf: bytes):
-		type, id = unpack_from("!BxH", buf)
-		return cls(type, id, [])
+		transtype, id = unpack_from("!BxH", buf)
+		if len(buf) != 4:
+			return cls(transtype, id, [Attribute.parse(buf[4:])])
+		return cls(transtype, id, [])
+
+
+class Attribute:
+	def __init__(self, type: int, data: bytes):
+		assert type == 14
+		assert len(data) == 2
+		self.type = type
+		self.data = data
+	
+	def build(self):
+		return pack("!H", 0x8000 | self.type) + self.data
+	
+	@classmethod
+	def parse(cls, buf: bytes):
+		if len(buf) != 4:
+			raise ValueError("Length mismatch")
+		type = unpack_from("!H", buf)[0] & 0x7fff
+		data = buf[2:]
+		return cls(type, data)
+
+
+class KEPayload(Payload):
+	def __init__(self, dh_group: int, data: bytes):
+		self.dh_group = dh_group
+		self.data = data
+		super().__init__(IKEV2_PAYLOAD_KE, [Raw(data)])
+	
+	def build(self, nextid, curidx):
+		if not self.stale:
+			return self.buf
+
+		buf = pack(
+			"!BxHHxx",
+			nextid,
+			0xAAAA, # Length placeholder
+			self.dh_group
+		)
+		buf = bytearray(buf)
+		buf += self.children[0].build(0, 0)
+		pack_into("!H", buf, 2, len(buf))
+		buf = bytes(buf)
+
+		self.buf = buf
+		self.stale = False
+		return buf
+
+	@classmethod
+	def parse(cls, buf: bytes):
+		if len(buf) < 4:
+			raise ValueError("Length mismatch")
+		dh_group, = unpack_from("!H", buf)
+		data = buf[4:]
+		return cls(dh_group, data)
+
+
+class NoncePayload(Payload):
+	def __init__(self, data: bytes):
+		self.data = data
+		super().__init__(IKEV2_PAYLOAD_NONCE, [Raw(data)])
+	
+	@classmethod
+	def parse(cls, buf: bytes):
+		return cls(buf)
 
 
 class NotifyPayload(Payload):
@@ -155,6 +223,8 @@ payload_map = {
 	IKEV2_PAYLOAD_SA: SAPayload,
 	IKEV2_SUB_PROPOSAL: Proposal,
 	IKEV2_SUB_TRANSFORM: Transform,
+	IKEV2_PAYLOAD_KE: KEPayload,
+	IKEV2_PAYLOAD_NONCE: NoncePayload,
 	IKEV2_PAYLOAD_NOTIFY: NotifyPayload,
 }
 
