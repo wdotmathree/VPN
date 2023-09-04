@@ -10,7 +10,7 @@ class Payload:
 		self.type = type
 		self.children = children
 		self.stale = True
-	
+
 	def addChildren(self, children: list["Payload"]):
 		self.stale = True
 		self.children += children
@@ -65,7 +65,7 @@ class Raw(Payload):
 class SAPayload(Payload):
 	def __init__(self, proposals: list["Proposal"]):
 		super().__init__(IKEV2_PAYLOAD_SA, proposals)
-	
+
 
 	@classmethod
 	def parse(cls, buf: bytes):
@@ -77,7 +77,7 @@ class Proposal(Payload):
 		self.num = num
 		self.protocol = protocol
 		super().__init__(IKEV2_SUB_PROPOSAL, transforms)
-	
+
 	def build(self, nextid, curidx):
 		if not self.stale:
 			return self.buf
@@ -112,7 +112,7 @@ class Transform(Payload):
 		self.transtype = transtype
 		self.id = id
 		super().__init__(IKEV2_SUB_TRANSFORM, attributes)
-	
+
 	def build(self, nextid, curidx):
 		if not self.stale:
 			return self.buf
@@ -148,10 +148,10 @@ class Attribute:
 		assert len(data) == 2
 		self.type = type
 		self.data = data
-	
+
 	def build(self):
 		return pack("!H", 0x8000 | self.type) + self.data
-	
+
 	@classmethod
 	def parse(cls, buf: bytes):
 		if len(buf) != 4:
@@ -166,7 +166,7 @@ class KEPayload(Payload):
 		self.dh_group = dh_group
 		self.data = data
 		super().__init__(IKEV2_PAYLOAD_KE, [Raw(data)])
-	
+
 	def build(self, nextid, curidx):
 		if not self.stale:
 			return self.buf
@@ -199,7 +199,7 @@ class NoncePayload(Payload):
 	def __init__(self, data: bytes):
 		self.data = data
 		super().__init__(IKEV2_PAYLOAD_NONCE, [Raw(data)])
-	
+
 	@classmethod
 	def parse(cls, buf: bytes):
 		return cls(buf)
