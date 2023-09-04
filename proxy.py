@@ -11,7 +11,7 @@ up.bind(("127.0.0.1", 9500))
 down.setblocking(0)
 up.setblocking(0)
 
-daddr, uaddr = ((),("127.0.0.1", 5000))
+daddr, uaddr = ((),("127.0.0.1", 4500))
 
 while True:
     try:
