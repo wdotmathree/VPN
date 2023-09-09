@@ -5,7 +5,7 @@ import typing
 
 from consts import *
 
-payload_map: dict[int, type("Payload")] = {}
+payload_map: dict[int, "Payload"] = {}
 
 class Payload:
 	def __init__(self, type: int, children: list["Payload"]):
@@ -45,13 +45,15 @@ class Payload:
 	def parse(cls, buf: bytes, ptype: int, id: bytes):
 		res = []
 		while len(buf):
+			if ptype == 0: break
 			nexttype, critical, length = unpack_from("!BBH", buf)
 			if ptype != IKEV2_PAYLOAD_ENCRYPTED and length > len(buf):
 				raise IKEException(IKEV2_NOTIFY_INVALID_SYNTAX)
 			if ptype in payload_map:
 				if ptype == IKEV2_PAYLOAD_ENCRYPTED:
 					res.append(payload_map[ptype].parse(buf[4:length], nexttype, id))
-				res.append(payload_map[ptype].parse(buf[4:length], id))
+				else:
+					res.append(payload_map[ptype].parse(buf[4:length], id))
 			else:
 				if critical & 0x80:
 					raise IKEException(IKEV2_NOTIFY_CRITICAL_PAYLOAD)
@@ -76,7 +78,6 @@ class SAPayload(Payload):
 	def __init__(self, proposals: list["Proposal"]):
 		super().__init__(IKEV2_PAYLOAD_SA, proposals)
 
-
 	@classmethod
 	def parse(cls, buf: bytes, id: bytes):
 		return cls(Payload.parse(buf, IKEV2_SUB_PROPOSAL, id))
@@ -85,9 +86,10 @@ class SAPayload(Payload):
 class Proposal(Payload):
 	children: list["Transform"]
 
-	def __init__(self, num: int, protocol: int, transforms: list["Transform"]):
+	def __init__(self, num: int, protocol: int, spi: bytes, transforms: list["Transform"]):
 		self.num = num
 		self.protocol = protocol
+		self.spi = spi
 		super().__init__(IKEV2_SUB_PROPOSAL, transforms)
 
 	def build(self, nextid, curidx):
@@ -100,10 +102,11 @@ class Proposal(Payload):
 			0xAAAA, # Length placeholder
 			self.num,
 			self.protocol,
-			0x00, # SPI size
+			len(self.spi),
 			len(self.children) # Number of transforms
 		)
 		buf = bytearray(buf)
+		buf += self.spi
 		for i, c in enumerate(self.children):
 			buf += c.build(0 if i == len(self.children) - 1 else self.children[i + 1].type, i + 1)
 		pack_into("!H", buf, 2, len(buf))
@@ -115,8 +118,9 @@ class Proposal(Payload):
 
 	@classmethod
 	def parse(cls, buf: bytes, id: bytes):
-		num, protocol = unpack_from("!BB", buf)
-		return cls(num, protocol, Payload.parse(buf[4:], IKEV2_SUB_TRANSFORM, id))
+		num, protocol, spilen = unpack_from("!BBB", buf)
+		spi = buf[4:4+spilen]
+		return cls(num, protocol, spi, Payload.parse(buf[4+spilen:], IKEV2_SUB_TRANSFORM, id))
 
 
 class Transform(Payload):
@@ -168,8 +172,6 @@ class Attribute:
 
 	@classmethod
 	def parse(cls, buf: bytes):
-		if len(buf) != 4:
-			raise IKEException(IKEV2_NOTIFY_INVALID_SYNTAX)
 		type = unpack_from("!H", buf)[0] & 0x7fff
 		data = buf[2:]
 		return cls(type, data)
@@ -204,8 +206,6 @@ class KEPayload(Payload):
 
 	@classmethod
 	def parse(cls, buf: bytes, id: bytes):
-		if len(buf) < 4:
-			raise IKEException(IKEV2_NOTIFY_INVALID_SYNTAX)
 		dh_group, = unpack_from("!H", buf)
 		data = buf[4:]
 		return cls(dh_group, data)
@@ -228,8 +228,6 @@ class NotifyPayload(Payload):
 
 	@classmethod
 	def parse(cls, buf: bytes, id: bytes):
-		if len(buf) < 4:
-			raise IKEException(IKEV2_NOTIFY_INVALID_SYNTAX)
 		type, = unpack_from("!H", buf, 2)
 		msg = buf[4:]
 		return cls(type, msg)
@@ -311,11 +309,41 @@ class IdentityPayload(Payload):
 
 	@classmethod
 	def parse(cls, buf: bytes, id: bytes):
-		if len(buf) < 4:
-			raise IKEException(IKEV2_NOTIFY_INVALID_SYNTAX)
 		idtype, = unpack_from("!H", buf)
 		data = buf[4:]
 		return cls(idtype, data)
+
+
+class AuthPayload(Payload):
+	def __init__(self, method: int, data: bytes):
+		self.method = method
+		self.data = data
+		super().__init__(IKEV2_PAYLOAD_AUTH, [Raw(data)])
+	
+	def build(self, nextid, curidx):
+		if not self.stale:
+			return self.buf
+
+		buf = pack(
+			"!BxHBxxx",
+			nextid,
+			0xAAAA, # Length placeholder
+			self.method
+		)
+		buf = bytearray(buf)
+		buf += self.children[0].build(0, 0)
+		pack_into("!H", buf, 2, len(buf))
+		buf = bytes(buf)
+
+		self.buf = buf
+		self.stale = False
+		return buf
+
+	@classmethod
+	def parse(cls, buf: bytes, id: bytes):
+		method, = unpack_from("!H", buf)
+		data = buf[4:]
+		return cls(method, data)
 
 
 payload_map = {
@@ -327,7 +355,8 @@ payload_map = {
 	IKEV2_PAYLOAD_NOTIFY: NotifyPayload,
 	IKEV2_PAYLOAD_ENCRYPTED: EncryptedPayload,
 	IKEV2_PAYLOAD_IDI: IdentityPayload,
-	IKEV2_PAYLOAD_IDR: IdentityPayload
+	IKEV2_PAYLOAD_IDR: IdentityPayload,
+	IKEV2_PAYLOAD_AUTH: AuthPayload,
 }
 
 class Message:
@@ -382,7 +411,7 @@ class Message:
 	def parse(cls, buf: bytes):
 		id, nextpayload, version, exchange, flags, mid, length = unpack_from("!16sBBBBLL", buf)
 		try:
-			if version != 0x20:
+			if version & 0xf0 != 0x20:
 				raise IKEException(IKEV2_NOTIFY_INVALID_VERSION, b'\x20')
 			if length != len(buf):
 				raise IKEException(IKEV2_NOTIFY_INVALID_SYNTAX)

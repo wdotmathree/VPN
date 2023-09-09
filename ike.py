@@ -31,6 +31,7 @@ def notify(id, exchange, mid, type, msg):
 def parse_proposal(proposal: Proposal):
 	num = 0
 	for t in proposal.children:
+		if type(t) == Raw: continue
 		if t.transtype == 1: # Encryption
 			if t.id == 12: # AES-CBC
 				if t.children[0].data == b'\x01\x00':
@@ -56,9 +57,7 @@ def sa_init(id, m: Message):
 	nr = None
 	with open("/dev/urandom", "rb") as f:
 		r = f.read(256)
-		# r = b'\x00' * 255 + b'\x01'
 		nr = f.read(32)
-		# nr = b'\x00' * 32
 	r = int.from_bytes(r, 'big')
 	gr = pow(2, r, DH_P).to_bytes(256, 'big').rjust(256, b'\x00')
 	for p in m.children:
@@ -72,7 +71,7 @@ def sa_init(id, m: Message):
 			if not success:
 				raise IKEException((IKEV2_NOTIFY_NO_PROPOSAL, b''), m.exchange, m.mid)
 			# Build reply
-			p = SAPayload([Proposal(success, 1, [Transform(1, 12, [Attribute(14, b'\x01\x00')]), Transform(3, 12, []), Transform(2, 5, []), Transform(4, 14, [])])])
+			p = SAPayload([Proposal(success, 1, b'', [Transform(1, 12, [Attribute(14, b'\x01\x00')]), Transform(3, 12, []), Transform(2, 5, []), Transform(4, 14, [])])])
 			reply.addChild(p)
 		elif p.type == IKEV2_PAYLOAD_KE:
 			if p.dh_group != 14:
@@ -116,6 +115,9 @@ def sa_init(id, m: Message):
 	print("er: ", sker.hex())
 	return IKE_AUTH
 
+def auth(id, m: Message):
+	reply = Message(id, IKE_AUTH, m.mid, True, False, [])
+	return IKE_AUTH
 
 def handle(id):
 	stage = IKE_SA_INIT
