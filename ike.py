@@ -128,6 +128,8 @@ def handle(id):
 			return
 		if stage == IKE_SA_INIT:
 			stage = sa_init(id, m)
+		elif stage == IKE_AUTH:
+			stage = auth(id, m)
 
 def handle_catch(id):
 	try:
@@ -154,7 +156,7 @@ if __name__ == "__main__":
 				# New connection
 				sid = randint(1, 0xffffffffffffffff)
 				id = pack("!QQ", cid, sid)
-				thing[id] = ([buf], a, {})
+				thing[id] = [[buf], a, {}]
 				# handle(id)
 				Thread(target=handle_catch, args=(id,), daemon=False).start()
 			else:

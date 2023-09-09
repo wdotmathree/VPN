@@ -284,6 +284,40 @@ class EncryptedPayload(Payload):
 		return cls(id, Payload.parse(buf, nextid, id))
 
 
+class IdentityPayload(Payload):
+	def __init__(self, idtype: int, data: bytes):
+		self.idtype = idtype
+		self.data = data
+		super().__init__(type, [Raw(data)])
+
+	def build(self, nextid, curidx):
+		if not self.stale:
+			return self.buf
+
+		buf = pack(
+			"!BxHBxxx",
+			nextid,
+			0xAAAA, # Length placeholder
+			self.idtype
+		)
+		buf = bytearray(buf)
+		buf += self.children[0].build(0, 0)
+		pack_into("!H", buf, 2, len(buf))
+		buf = bytes(buf)
+
+		self.buf = buf
+		self.stale = False
+		return buf
+
+	@classmethod
+	def parse(cls, buf: bytes, id: bytes):
+		if len(buf) < 4:
+			raise IKEException(IKEV2_NOTIFY_INVALID_SYNTAX)
+		idtype, = unpack_from("!H", buf)
+		data = buf[4:]
+		return cls(idtype, data)
+
+
 payload_map = {
 	IKEV2_PAYLOAD_SA: SAPayload,
 	IKEV2_SUB_PROPOSAL: Proposal,
@@ -292,6 +326,8 @@ payload_map = {
 	IKEV2_PAYLOAD_NONCE: NoncePayload,
 	IKEV2_PAYLOAD_NOTIFY: NotifyPayload,
 	IKEV2_PAYLOAD_ENCRYPTED: EncryptedPayload,
+	IKEV2_PAYLOAD_IDI: IdentityPayload,
+	IKEV2_PAYLOAD_IDR: IdentityPayload
 }
 
 class Message:
