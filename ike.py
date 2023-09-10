@@ -155,7 +155,6 @@ def auth(id, m: Message):
 		elif p.type == IKEV2_PAYLOAD_AUTH:
 			iauthdata = p.children[0].data
 			sigkey = HMAC.new(b'PASSWORD', b'Key Pad for IKEv2', SHA256).digest()
-			print(rsig.hex())
 			rsig = HMAC.new(sigkey, rsig, SHA256).digest()
 			isig = HMAC.new(sigkey, isig, SHA256).digest()
 			if iauthdata != isig:
