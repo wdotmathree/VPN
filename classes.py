@@ -1,3 +1,4 @@
+from typing import Any
 from Crypto.Cipher import AES
 from Crypto.Hash import HMAC, SHA256
 from struct import pack, pack_into, unpack, unpack_from
@@ -11,20 +12,14 @@ class Payload:
 	def __init__(self, type: int, children: list["Payload"]):
 		self.type = type
 		self.children = children
-		self.stale = True
 
 	def addChildren(self, children: list["Payload"]):
-		self.stale = True
 		self.children += children
 
 	def addChild(self, child: "Payload"):
-		self.stale = True
 		self.children.append(child)
 
 	def build(self, nextid, curidx):
-		if not self.stale:
-			return self.buf
-
 		buf = pack(
 			"!BBH",
 			nextid,
@@ -37,8 +32,6 @@ class Payload:
 		pack_into("!H", buf, 2, len(buf))
 		buf = bytes(buf)
 
-		self.buf = buf
-		self.stale = False
 		return buf
 
 	@classmethod
@@ -57,6 +50,8 @@ class Payload:
 			else:
 				if critical & 0x80:
 					raise IKEException(IKEV2_NOTIFY_CRITICAL_PAYLOAD)
+				else:
+					res.append(UnknownPayload(ptype, buf[4:length]))
 			ptype = nexttype
 			buf = buf[length:]
 		return res
@@ -72,6 +67,25 @@ class Raw(Payload):
 		return self.data
 
 
+class UnknownPayload(Payload):
+	def __init__(self, type: int, data: bytes):
+		self.type = type
+		self.data = data
+
+	def build(self, nextid, curidx):
+		buf = pack(
+			"!BBH",
+			nextid,
+			0, # Critical bit is never set
+			0xAAAA # Length placeholder
+		)
+		buf = bytearray(buf)
+		buf += self.data
+		pack_into("!H", buf, 2, len(buf))
+		buf = bytes(buf)
+		return buf
+	
+
 class SAPayload(Payload):
 	children: list["Proposal"]
 
@@ -80,7 +94,8 @@ class SAPayload(Payload):
 
 	@classmethod
 	def parse(cls, buf: bytes, id: bytes):
-		return cls(Payload.parse(buf, IKEV2_SUB_PROPOSAL, id))
+		res = cls(Payload.parse(buf, IKEV2_SUB_PROPOSAL, id))
+		return res
 
 
 class Proposal(Payload):
@@ -93,9 +108,6 @@ class Proposal(Payload):
 		super().__init__(IKEV2_SUB_PROPOSAL, transforms)
 
 	def build(self, nextid, curidx):
-		if not self.stale:
-			return self.buf
-
 		buf = pack(
 			"!BxHBBBB",
 			nextid,
@@ -112,15 +124,13 @@ class Proposal(Payload):
 		pack_into("!H", buf, 2, len(buf))
 		buf = bytes(buf)
 
-		self.buf = buf
-		self.stale = False
 		return buf
 
 	@classmethod
 	def parse(cls, buf: bytes, id: bytes):
 		num, protocol, spilen = unpack_from("!BBB", buf)
 		spi = buf[4:4+spilen]
-		return cls(num, protocol, spi, Payload.parse(buf[4+spilen:], IKEV2_SUB_TRANSFORM, id))
+		return cls(num, protocol, spi, Payload.parse(buf[4+spilen:], IKEV2_SUB_TRANSFORM, id)) 
 
 
 class Transform(Payload):
@@ -132,9 +142,6 @@ class Transform(Payload):
 		super().__init__(IKEV2_SUB_TRANSFORM, attributes)
 
 	def build(self, nextid, curidx):
-		if not self.stale:
-			return self.buf
-
 		buf = pack(
 			"!BxHBxH",
 			nextid,
@@ -148,16 +155,16 @@ class Transform(Payload):
 		pack_into("!H", buf, 2, len(buf))
 		buf = bytes(buf)
 
-		self.buf = buf
-		self.stale = False
 		return buf
 
 	@classmethod
 	def parse(cls, buf: bytes, id: bytes):
 		transtype, id = unpack_from("!BxH", buf)
 		if len(buf) != 4:
-			return cls(transtype, id, [Attribute.parse(buf[4:])])
-		return cls(transtype, id, [])
+			res = cls(transtype, id, [Attribute.parse(buf[4:])])
+		else:
+			res = cls(transtype, id, [])
+		return res
 
 
 class Attribute:
@@ -174,7 +181,7 @@ class Attribute:
 	def parse(cls, buf: bytes):
 		type = unpack_from("!H", buf)[0] & 0x7fff
 		data = buf[2:]
-		return cls(type, data)
+		return cls(type, data) 
 
 
 class KEPayload(Payload):
@@ -186,9 +193,6 @@ class KEPayload(Payload):
 		super().__init__(IKEV2_PAYLOAD_KE, [Raw(data)])
 
 	def build(self, nextid, curidx):
-		if not self.stale:
-			return self.buf
-
 		buf = pack(
 			"!BxHHxx",
 			nextid,
@@ -200,15 +204,13 @@ class KEPayload(Payload):
 		pack_into("!H", buf, 2, len(buf))
 		buf = bytes(buf)
 
-		self.buf = buf
-		self.stale = False
 		return buf
 
 	@classmethod
 	def parse(cls, buf: bytes, id: bytes):
 		dh_group, = unpack_from("!H", buf)
 		data = buf[4:]
-		return cls(dh_group, data)
+		return cls(dh_group, data) 
 
 
 class NoncePayload(Payload):
@@ -218,7 +220,7 @@ class NoncePayload(Payload):
 
 	@classmethod
 	def parse(cls, buf: bytes, id: bytes):
-		return cls(buf)
+		return cls(buf) 
 
 
 class NotifyPayload(Payload):
@@ -230,7 +232,7 @@ class NotifyPayload(Payload):
 	def parse(cls, buf: bytes, id: bytes):
 		type, = unpack_from("!H", buf, 2)
 		msg = buf[4:]
-		return cls(type, msg)
+		return cls(type, msg) 
 
 
 class EncryptedPayload(Payload):
@@ -256,7 +258,6 @@ class EncryptedPayload(Payload):
 		p = bytearray()
 		for i, c in enumerate(self.children):
 			p += c.build(0 if i == len(self.children) - 1 else self.children[i + 1].type, i + 1)
-		print(len(p))
 		pad = -(len(p) + 1) % 16
 		with open("/dev/urandom", "rb") as f:
 			extra = f.read(1)[0] & 0xf0
@@ -268,30 +269,26 @@ class EncryptedPayload(Payload):
 		pack_into("!H", buf, 2, len(buf) + 16)
 		buf = bytes(buf)
 
-		self.buf = buf
-		self.stale = False
 		return buf
 
 	@classmethod
 	def parse(cls, buf: bytes, nextid: int, id: bytes):
+		origbuf = bytes(buf)
 		iv = buf[:16]
 		buf = buf[16:]
 		buf = AES.new(thing[id][2]['ei'], AES.MODE_CBC, iv).decrypt(buf)
 		pad = buf[-1]
 		buf = buf[:-pad]
-		return cls(id, Payload.parse(buf, nextid, id))
+		return cls(id, Payload.parse(buf, nextid, id)) 
 
 
 class IdentityPayload(Payload):
-	def __init__(self, idtype: int, data: bytes):
+	def __init__(self, type: int, idtype: int, data: bytes):
 		self.idtype = idtype
 		self.data = data
 		super().__init__(type, [Raw(data)])
 
 	def build(self, nextid, curidx):
-		if not self.stale:
-			return self.buf
-
 		buf = pack(
 			"!BxHBxxx",
 			nextid,
@@ -303,15 +300,13 @@ class IdentityPayload(Payload):
 		pack_into("!H", buf, 2, len(buf))
 		buf = bytes(buf)
 
-		self.buf = buf
-		self.stale = False
 		return buf
 
 	@classmethod
 	def parse(cls, buf: bytes, id: bytes):
-		idtype, = unpack_from("!H", buf)
+		idtype, = unpack_from("!B", buf)
 		data = buf[4:]
-		return cls(idtype, data)
+		return cls(IKEV2_PAYLOAD_IDI, idtype, data) 
 
 
 class AuthPayload(Payload):
@@ -321,9 +316,6 @@ class AuthPayload(Payload):
 		super().__init__(IKEV2_PAYLOAD_AUTH, [Raw(data)])
 	
 	def build(self, nextid, curidx):
-		if not self.stale:
-			return self.buf
-
 		buf = pack(
 			"!BxHBxxx",
 			nextid,
@@ -335,15 +327,13 @@ class AuthPayload(Payload):
 		pack_into("!H", buf, 2, len(buf))
 		buf = bytes(buf)
 
-		self.buf = buf
-		self.stale = False
 		return buf
 
 	@classmethod
 	def parse(cls, buf: bytes, id: bytes):
-		method, = unpack_from("!H", buf)
+		method, = unpack_from("!B", buf)
 		data = buf[4:]
-		return cls(method, data)
+		return cls(method, data) 
 
 
 payload_map = {
@@ -366,20 +356,14 @@ class Message:
 		self.mid = mid
 		self.children = children
 		self.flags = (response << 5) | (initiator << 3)
-		self.stale = True
 
 	def addChildren(self, children: list[Payload]):
-		self.stale = True
 		self.children += children
 
 	def addChild(self, child: Payload):
-		self.stale = True
 		self.children.append(child)
 
 	def build(self):
-		if not self.stale:
-			return self.buf
-
 		nextpayload = 0
 		if len(self.children):
 			nextpayload = self.children[0].type
@@ -403,8 +387,6 @@ class Message:
 
 		buf = bytes(buf)
 
-		self.buf = buf
-		self.stale = False
 		return buf
 
 	@classmethod
@@ -434,7 +416,7 @@ class Message:
 
 			res = cls(id, exchange, mid, flags & 0x20 != 0, flags & 0x08 != 0, [])
 			res.children += Payload.parse(buf[28:], nextpayload, id)
-				
+
 			return res
 		except IKEException as e:
 			raise IKEException(e.args, exchange, mid)
