@@ -3,15 +3,14 @@
 from socket import *
 from time import sleep
 
-down = socket(AF_INET, SOCK_DGRAM)
+down = socket(AF_INET, SOCK_RAW, IPPROTO_ESP)
 up = socket(AF_INET, SOCK_DGRAM)
 
-down.bind(("0.0.0.0", 500))
 up.bind(("127.0.0.1", 9500))
 down.setblocking(0)
 up.setblocking(0)
 
-daddr, uaddr = ((),("127.0.0.1", 4500))
+daddr, uaddr = ((),("127.0.0.1", 5000))
 
 while True:
     try:

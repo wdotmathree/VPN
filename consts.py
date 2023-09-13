@@ -43,6 +43,4 @@ DH_P = 0xffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74020bbea
 
 # Exceptions
 class IKEException(Exception): ...
-
-# Global variables
-thing: dict[bytes, tuple[list[bytes]]] = {}
+class ESPException(Exception): ...

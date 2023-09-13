@@ -15,20 +15,23 @@ import os
 from classes import *
 from consts import *
 
-s = socket(AF_INET6, SOCK_DGRAM)
-s.bind(("::", 4500 if os.getuid() else 500))
+s: socket = None
+
+misoq: list[tuple[bytes, tuple[str, int]]] = [] # Message queue for IKE messages from esp.py
+mosiq: list[dict[str, Any]] = [] # Message queue for message from ike.py
+thing: dict[bytes, tuple[list[bytes]]] = {}
 
 
 def recv(id):
-	while len(thing[id][0]) == 0:
+	while len(thing[id]['q']) == 0:
 		sleep(0.01)
-	return thing[id][0].pop(0)
+	return thing[id]['q'].pop(0)
 
 def notify(id, exchange, mid, type, msg):
 	d = b'\x00\x00' + pack("!H", type) + msg # Notify payload + notification data
 	p = Payload(IKEV2_PAYLOAD_NOTIFY, [Raw(d)]) # Notify payload + header
 	msg = Message(id, exchange, mid, True, False, [p]).build() # Message header + notify payload
-	s.sendto(msg, thing[id][1])
+	s.sendto(msg, thing[id]['a'])
 
 def parse_proposal_init(proposal: Proposal):
 	num = 0
@@ -103,7 +106,7 @@ def sa_init(id, m: Message):
 			# Build reply
 			p = NoncePayload(nr)
 			reply.addChild(p)
-	s.sendto(reply.build(), thing[id][1])
+	s.sendto(reply.build(), thing[id]['a'])
 	rsig = reply.build() + rsig
 	# Generate cryptography keys
 	gir = pow(int.from_bytes(gi, 'big'), r, DH_P)
@@ -119,15 +122,17 @@ def sa_init(id, m: Message):
 	skpi = HMAC.new(skseed, sker + hs + b'\x06', SHA256).digest()
 	skpr = HMAC.new(skseed, skpi + hs + b'\x07', SHA256).digest()
 	# Store keys in dictionary
-	thing[id][2]["d"] = skd
-	thing[id][2]["ai"] = skai
-	thing[id][2]["ar"] = skar
-	thing[id][2]["ei"] = skei
-	thing[id][2]["er"] = sker
-	thing[id][2]["pi"] = skpi
-	thing[id][2]["pr"] = skpr
-	thing[id][2]["rsig"] = rsig
-	thing[id][2]["isig"] = isig
+	thing[id]['d'] = skd
+	thing[id]['ai'] = skai
+	thing[id]['ar'] = skar
+	thing[id]['ei'] = skei
+	thing[id]['er'] = sker
+	thing[id]['pi'] = skpi
+	thing[id]['pr'] = skpr
+	thing[id]['rsig'] = rsig
+	thing[id]['isig'] = isig
+	thing[id]['ni'] = ni
+	thing[id]['nr'] = nr
 	print("Keys generated: ")
 	print("ei: ", skei.hex())
 	print("er: ", sker.hex())
@@ -141,16 +146,16 @@ def auth(id, m: Message):
 	reply = Message(id, IKE_AUTH, m.mid, True, False, [EncryptedPayload(id, [])])
 	username = None
 	iauthdata = None
-	rsig = thing[id][2]["rsig"]
-	isig = thing[id][2]["isig"]
+	rsig = thing[id]['rsig']
+	isig = thing[id]['isig']
 	for p in m.children[0].children:
 		if p.type == IKEV2_PAYLOAD_IDI:
 			username = p.children[0].data
 			idi = p.build(IKEV2_PAYLOAD_AUTH, 0)
-			isig += HMAC.new(thing[id][2]["pi"], idi[4:], SHA256).digest()
+			isig += HMAC.new(thing[id]['pi'], idi[4:], SHA256).digest()
 			# Build reply
 			p = IdentityPayload(IKEV2_PAYLOAD_IDR, IKEV2_ID_KEY_ID, b'Server')
-			rsig += HMAC.new(thing[id][2]["pr"], p.build(IKEV2_PAYLOAD_AUTH, 0)[4:], SHA256).digest()
+			rsig += HMAC.new(thing[id]['pr'], p.build(IKEV2_PAYLOAD_AUTH, 0)[4:], SHA256).digest()
 			reply.children[0].addChild(p)
 		elif p.type == IKEV2_PAYLOAD_AUTH:
 			iauthdata = p.children[0].data
@@ -172,9 +177,9 @@ def auth(id, m: Message):
 			if not success:
 				raise IKEException((IKEV2_NOTIFY_NO_PROPOSAL, b''), m.exchange, m.mid)
 			# Build reply
-			thing[id][2]["espspii"] = p.children[0].spi
+			thing[id]['espspii'] = p.children[0].spi
 			spi = pack("!L", randint(1, 0xffffffff))
-			thing[id][2]["espspir"] = spi
+			thing[id]['espspir'] = spi
 			p = SAPayload([Proposal(success, 3, spi, [Transform(1, 12, [Attribute(14, b'\x01\x00')]), Transform(3, 12, []), Transform(5, 0, [])])])
 			reply.children[0].addChild(p)
 	# Manually add global traffic selectors
@@ -182,7 +187,12 @@ def auth(id, m: Message):
 	tmp.type = 44
 	reply.children[0].addChild(tmp)
 	# reply.children = reply.children[0].children
-	s.sendto(reply.build(), thing[id][1])
+	s.sendto(reply.build(), thing[id]['a'])
+
+	# Generate ESP keys
+	espkey = HMAC.new(thing[id]['d'], thing[id]['ni'] + thing[id]['nr'], SHA256).digest()
+	# Send message to ESP module
+	mosiq.append({'ispi': thing[id]['espspii'], 'rspi': thing[id]['espspir'], 'k': espkey, 'id': id})
 	return IKE_IDLE
 
 def decide(id, m: Message):
@@ -217,27 +227,39 @@ def handle_catch(id):
 			n = NotifyPayload(*e.args[0])
 		else:
 			n = NotifyPayload(e.args[0][0], b'')
-		if len(thing[id][2]):
+		if len(thing[id]) > 2:
 			n = EncryptedPayload(id, [n])
 		nm = Message(id, e.args[1], e.args[2], True, False, [n]).build()
-		s.sendto(nm, thing[id][1])
+		s.sendto(nm, thing[id]['a'])
 	print("deleting")
 	del thing[id]
 
-if __name__ == "__main__":
+def main(misoq_in, mosiq_in, thing_in):
+	global s, misoq, mosiq, thing
+	s = socket(AF_INET6, SOCK_DGRAM)
+	s.bind(("::", 4500 if os.getuid() else 500))
+	s.setblocking(0)
+	misoq, mosiq, thing = misoq_in, mosiq_in, thing_in
+	init_classes(thing)
+
 	while True:
-		buf, a = s.recvfrom(65535)
 		try:
+			for msg in misoq:
+				s.sendto(*msg)
+			for i in range(len(mosiq)):
+				misoq.pop()
+			buf, a = s.recvfrom(65535)
 			cid, sid = unpack_from("!QQ", buf, 0)
 			id = buf[:16]
 			if sid == 0:
 				# New connection
 				sid = randint(1, 0xffffffffffffffff)
 				id = pack("!QQ", cid, sid)
-				thing[id] = [[buf], a, {}]
+				thing[id] = {'q': [buf], 'a': a}
 				Thread(target=handle_catch, args=(id,), daemon=False).start()
 			else:
 				# Append to existing queue
-				thing[id][0].append(buf)
-				thing[id][1] = a
-		except: pass
+				thing[id]['q'].append(buf)
+				thing[id]['a'] = a
+		except BlockingIOError:
+			sleep(0.01)

@@ -1,12 +1,14 @@
 from typing import Any
 from Crypto.Cipher import AES
 from Crypto.Hash import HMAC, SHA256
-from struct import pack, pack_into, unpack, unpack_from
-import typing
+from struct import pack, pack_into, unpack_from
+from typing import *
 
 from consts import *
 
 payload_map: dict[int, "Payload"] = {}
+
+thing: dict[bytes, dict[str, Any]] = None
 
 class Payload:
 	def __init__(self, type: int, children: list["Payload"]):
@@ -264,7 +266,7 @@ class EncryptedPayload(Payload):
 		with open("/dev/urandom", "rb") as f:
 			p += f.read(pad + extra)
 		p += pack("!B", pad + extra)
-		p = AES.new(thing[self.id][2]['er'], AES.MODE_CBC, iv).encrypt(p)
+		p = AES.new(thing[self.id]['er'], AES.MODE_CBC, iv).encrypt(p)
 		buf += p
 		pack_into("!H", buf, 2, len(buf) + 16)
 		buf = bytes(buf)
@@ -276,7 +278,7 @@ class EncryptedPayload(Payload):
 		origbuf = bytes(buf)
 		iv = buf[:16]
 		buf = buf[16:]
-		buf = AES.new(thing[id][2]['ei'], AES.MODE_CBC, iv).decrypt(buf)
+		buf = AES.new(thing[id]['ei'], AES.MODE_CBC, iv).decrypt(buf)
 		pad = buf[-1]
 		buf = buf[:-pad]
 		return cls(id, Payload.parse(buf, nextid, id)) 
@@ -383,7 +385,7 @@ class Message:
 		pack_into("!L", buf, 24, len(buf))
 
 		if self.children[-1].type == IKEV2_PAYLOAD_ENCRYPTED:
-			buf += HMAC.new(thing[self.id][2]['ar'], buf, SHA256).digest()[:16]
+			buf += HMAC.new(thing[self.id]['ar'], buf, SHA256).digest()[:16]
 
 		buf = bytes(buf)
 
@@ -411,7 +413,7 @@ class Message:
 				# Verify MAC
 				mac = buf[-16:]
 				buf = buf[:-16]
-				if HMAC.new(thing[id][2]['ai'], buf, SHA256).digest()[:16] != mac:
+				if HMAC.new(thing[id]['ai'], buf, SHA256).digest()[:16] != mac:
 					raise IKEException(IKEV2_NOTIFY_INVALID_SYNTAX, b'')
 
 			res = cls(id, exchange, mid, flags & 0x20 != 0, flags & 0x08 != 0, [])
@@ -420,3 +422,8 @@ class Message:
 			return res
 		except IKEException as e:
 			raise IKEException(e.args, exchange, mid)
+
+
+def init_classes(thing_in):
+	global thing
+	thing = thing_in
