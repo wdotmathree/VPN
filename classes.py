@@ -338,6 +338,38 @@ class AuthPayload(Payload):
 		return cls(method, data) 
 
 
+class DeletePayload(Payload):
+	def __init__(self, protocol: int, spis: list[bytes]):
+		self.protocol = protocol
+		self.spis = spis
+		super().__init__(IKEV2_PAYLOAD_DELETE, [])
+	
+	def build(self, nextid, curidx):
+		buf = pack(
+			"!BxHBBH",
+			nextid,
+			0xAAAA, # Length placeholder
+			self.protocol,
+			len(self.spis[0]) if len(self.spis) else 0,
+			len(self.spis)
+		)
+		buf = bytearray(buf)
+		for spi in self.spis:
+			buf += spi
+		pack_into("!H", buf, 2, len(buf))
+		buf = bytes(buf)
+
+		return buf
+
+	@classmethod
+	def parse(cls, buf: bytes, id: bytes):
+		protocol, spilen, numspis = unpack_from("!BBH", buf)
+		spis = []
+		for i in range(numspis):
+			spis.append(buf[4 + i * spilen:4 + (i + 1) * spilen])
+		return cls(protocol, spis)
+
+
 payload_map = {
 	IKEV2_PAYLOAD_SA: SAPayload,
 	IKEV2_SUB_PROPOSAL: Proposal,
@@ -349,6 +381,7 @@ payload_map = {
 	IKEV2_PAYLOAD_IDI: IdentityPayload,
 	IKEV2_PAYLOAD_IDR: IdentityPayload,
 	IKEV2_PAYLOAD_AUTH: AuthPayload,
+	IKEV2_PAYLOAD_DELETE: DeletePayload,
 }
 
 class Message:

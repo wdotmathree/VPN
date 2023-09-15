@@ -23,9 +23,12 @@ thing: dict[bytes, tuple[list[bytes]]] = {}
 
 
 def recv(id):
-	while len(thing[id]['q']) == 0:
-		sleep(0.01)
-	return thing[id]['q'].pop(0)
+	try:
+		while len(thing[id]['q']) == 0:
+			sleep(0.01)
+		return thing[id]['q'].pop(0)
+	except KeyError:
+		return b''
 
 def notify(id, exchange, mid, type, msg):
 	d = b'\x00\x00' + pack("!H", type) + msg # Notify payload + notification data
@@ -177,9 +180,9 @@ def auth(id, m: Message):
 			if not success:
 				raise IKEException((IKEV2_NOTIFY_NO_PROPOSAL, b''), m.exchange, m.mid)
 			# Build reply
-			thing[id]['espspii'] = p.children[0].spi
+			thing[id]['espspir'] = p.children[0].spi
 			spi = pack("!L", randint(1, 0xffffffff))
-			thing[id]['espspir'] = spi
+			thing[id]['espspii'] = spi
 			p = SAPayload([Proposal(success, 3, spi, [Transform(1, 12, [Attribute(14, b'\x01\x00')]), Transform(3, 12, []), Transform(5, 0, [])])])
 			reply.children[0].addChild(p)
 	# Manually add global traffic selectors
@@ -190,21 +193,31 @@ def auth(id, m: Message):
 	s.sendto(reply.build(), thing[id]['a'])
 
 	# Generate ESP keys
-	espkey = HMAC.new(thing[id]['d'], thing[id]['ni'] + thing[id]['nr'], SHA256).digest()
+	espekey = HMAC.new(thing[id]['d'], thing[id]['ni'] + thing[id]['nr'] + b'\x01', SHA256).digest()
+	espakey = HMAC.new(thing[id]['d'], espekey + thing[id]['ni'] + thing[id]['nr'] + b'\x02', SHA256).digest()
+	print("ESP keys:")
+	print("e: ", espekey.hex())
+	print("a: ", espakey.hex())
 	# Send message to ESP module
-	mosiq.append({'ispi': thing[id]['espspii'], 'rspi': thing[id]['espspir'], 'k': espkey, 'id': id})
+	mosiq.append({'ispi': thing[id]['espspii'], 'rspi': thing[id]['espspir'], 'ek': espekey, 'ak': espakey, 'id': id})
 	return IKE_IDLE
 
 def decide(id, m: Message):
+	if m.exchange == IKE_INFORMATIONAL:
+		for p in m.children[0].children:
+			if p.type == IKEV2_PAYLOAD_DELETE:
+				if p.protocol == 1: # IKE
+					return IKE_DELETED
 	# TODO: Figure out what to do
 	return IKE_IDLE # No-op because not implemented
 
 def handle(id):
 	stage = IKE_SA_INIT
-	while True:
-		if stage == IKE_AUTH:
-			print(end="")
-		m = Message.parse(recv(id))
+	while stage != IKE_DELETED:
+		buf = recv(id)
+		if len(buf) == 0:
+			return
+		m = Message.parse(buf)
 		# if len(m.children) >= 1 and m.children[0].type == IKEV2_PAYLOAD_ENCRYPTED:
 		# 	tmp = deepcopy(m)
 		# 	tmp.children = tmp.children[0].children
@@ -246,7 +259,7 @@ def main(misoq_in, mosiq_in, thing_in):
 		try:
 			for msg in misoq:
 				s.sendto(*msg)
-			for i in range(len(mosiq)):
+			for i in range(len(misoq)):
 				misoq.pop()
 			buf, a = s.recvfrom(65535)
 			cid, sid = unpack_from("!QQ", buf, 0)
@@ -256,7 +269,7 @@ def main(misoq_in, mosiq_in, thing_in):
 				sid = randint(1, 0xffffffffffffffff)
 				id = pack("!QQ", cid, sid)
 				thing[id] = {'q': [buf], 'a': a}
-				Thread(target=handle_catch, args=(id,), daemon=False).start()
+				Thread(target=handle_catch, args=(id,), daemon=True).start()
 			else:
 				# Append to existing queue
 				thing[id]['q'].append(buf)

@@ -1,6 +1,10 @@
 # Very bad ESP server implementation
 
+from Crypto.Cipher import AES
+from Crypto.Hash import SHA256, HMAC
 from socket import socket, AF_INET6, SOCK_RAW, SOCK_DGRAM, IPPROTO_ESP
+from socket import *
+from threading import Thread
 from time import sleep
 
 import os
@@ -14,17 +18,22 @@ thing = {} # idi: [q, a, k, idr, ikeid]
 
 def recv(id):
 	while len(thing[id]['q']) == 0:
-		sleep(0.01)
-	
+		sleep(0.1)
 	return thing[id]['q'].pop(0)
 
 
 def handle(id):
+	s = socket(AF_INET, SOCK_RAW, IPPROTO_TCP)
+	s.bind(("0.0.0.0", 0))
 	while True:
-		# parse whatever idk
 		buf = recv(id)
-		print(buf)
-		# TODO: implement
+		iv = buf[8:24]
+		enc = buf[24:-32]
+		icv = buf[-32:]
+		# Decrypt
+		cipher = AES.new(thing[id]['ek'], AES.MODE_CBC, iv)
+		dec = cipher.decrypt(enc)
+		s.sendto(dec, ("1.1.1.1", 0))
 
 def handle_catch(id):
 	try:
@@ -47,7 +56,7 @@ def main(misoq_in, mosiq_in, _):
 		s = socket(AF_INET6, SOCK_DGRAM)
 		s.bind(("::", 5000))
 	else:
-		s = socket(AF_INET6, SOCK_RAW, IPPROTO_ESP)
+		s = socket(AF_INET, SOCK_RAW, IPPROTO_ESP)
 	s.setblocking(0)
 	misoq, mosiq = misoq_in, mosiq_in
 
@@ -55,17 +64,15 @@ def main(misoq_in, mosiq_in, _):
 		try:
 			for msg in mosiq:
 				print('recieved msg')
-				thing[msg['ispi']] = {'q': [], 'a': None, 'k': msg['k'], 'idr': msg['rspi'], 'ikeid': msg['id']}
+				thing[msg['ispi']] = {'q': [], 'a': None, 'ek': msg['ek'], 'ak': msg['ak'], 'idr': msg['rspi'], 'ikeid': msg['id']}
+				Thread(target=handle_catch, args=(msg['ispi'],), daemon=True).start()
 			for i in range(len(mosiq)):
 				mosiq.pop()
 			buf, a = s.recvfrom(65535)
-			if len(buf):
-				print(buf)
+			buf = buf[20:]
 			id = buf[:4]
 			if id in thing:
 				# Append to existing queue
 				thing[id]['q'].append(buf)
 				thing[id]['a'] = a
-			else:
-				pass # Ignore invalid packets
 		except BlockingIOError: sleep(0.01)
