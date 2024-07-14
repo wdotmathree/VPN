@@ -2,7 +2,6 @@
 
 from Crypto.Cipher import AES
 from Crypto.Hash import SHA256, HMAC
-from socket import socket, AF_INET6, SOCK_RAW, SOCK_DGRAM, IPPROTO_ESP
 from socket import *
 from threading import Thread
 from time import sleep
@@ -15,25 +14,34 @@ from consts import *
 s: socket = None
 thing = {} # idi: [q, a, k, idr, ikeid]
 
-
 def recv(id):
 	while len(thing[id]['q']) == 0:
 		sleep(0.1)
 	return thing[id]['q'].pop(0)
 
-
 def handle(id):
 	s = socket(AF_INET, SOCK_RAW, IPPROTO_TCP)
+	s.setsockopt(IPPROTO_IP, IP_HDRINCL, 1)
 	s.bind(("0.0.0.0", 0))
+	b = b''
 	while True:
 		buf = recv(id)
 		iv = buf[8:24]
-		enc = buf[24:-32]
-		icv = buf[-32:]
+		icv = buf[-16:]
+		enc = buf[24:-16]
+		# Verify ICV
+		# TODO: Implement
 		# Decrypt
-		cipher = AES.new(thing[id]['ek'], AES.MODE_CBC, iv)
-		dec = cipher.decrypt(enc)
-		s.sendto(dec, ("1.1.1.1", 0))
+		dec = AES.new(thing[id]['ek'], AES.MODE_CBC, iv).decrypt(enc)
+		# Check next header and remove padding
+		nextHead = dec[-1]
+		padlen = dec[-2]
+		print(nextHead)
+		dec = dec[:-(padlen + 2)]
+		print(dec, dec[20:])
+
+		# Send message to transport layer processing
+		# TODO: Implement
 
 def handle_catch(id):
 	try:
