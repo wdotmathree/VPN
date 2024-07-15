@@ -1,16 +1,16 @@
 # Proxy for debugging (idk how to debug as root)
 
-from socket import *
 from time import sleep
+import socket
 
-down = socket(AF_INET, SOCK_RAW, IPPROTO_ESP)
-up = socket(AF_INET, SOCK_DGRAM)
+down = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ESP)
+up = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 up.bind(("127.0.0.1", 9500))
 down.setblocking(0)
 up.setblocking(0)
 
-daddr, uaddr = ((),("127.0.0.1", 5000))
+daddr, uaddr = ((), ("127.0.0.1", 5000))
 
 while True:
     try:

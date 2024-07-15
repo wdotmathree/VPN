@@ -2,7 +2,7 @@ import ike
 import esp
 
 from threading import Thread
-from typing import *
+from typing import Any
 
 misoq: list[tuple[bytes, tuple[str, int]]] = [] # Message queue for IKE messages from esp.py
 mosiq: list[dict[str, Any]] = [] # Message queue for message from ike.py
