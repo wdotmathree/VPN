@@ -1,5 +1,6 @@
 # Very bad IKEv2 server implementation
 
+from queue import Queue, Empty
 from random import randint
 from socket import socket, AF_INET6, SOCK_DGRAM
 from struct import pack, unpack_from
@@ -22,9 +23,7 @@ thing: dict[bytes, tuple[list[bytes]]] = {}
 
 def recv(id):
 	try:
-		while len(thing[id]['q']) == 0:
-			sleep(0.01)
-		return thing[id]['q'].pop(0)
+		return thing[id]['q'].get()
 	except KeyError:
 		return b''
 
@@ -210,7 +209,7 @@ def authStage(id, m: classes.Message):
 	print("e: ", espekey.hex())
 	print("a: ", espakey.hex())
 	# Send message to ESP module
-	mosiq.append({'ispi': thing[id]['espspii'], 'rspi': thing[id]['espspir'], 'ek': espekey, 'ak': espakey, 'id': id})
+	mosiq.put({'ispi': thing[id]['espspii'], 'rspi': thing[id]['espspir'], 'ek': espekey, 'ak': espakey, 'id': id})
 	return consts.IKE_IDLE
 
 
@@ -272,10 +271,16 @@ def main(misoq_in, mosiq_in, thing_in):
 
 	while True:
 		try:
-			for msg in misoq:
+			try:
+				msg = misoq.get_nowait()
+			except Empty:
+				msg = None
+			while msg is not None:
 				s.sendto(*msg)
-			for i in range(len(misoq)):
-				misoq.pop()
+				try:
+					msg = misoq.get_nowait()
+				except Empty:
+					break
 			buf, a = s.recvfrom(65535)
 			cid, sid = unpack_from("!QQ", buf, 0)
 			id = buf[:16]
@@ -283,11 +288,13 @@ def main(misoq_in, mosiq_in, thing_in):
 				# New connection
 				sid = randint(1, 0xffffffffffffffff)
 				id = pack("!QQ", cid, sid)
-				thing[id] = {'q': [buf], 'a': a}
+				q = Queue()
+				q.put(buf)
+				thing[id] = {'q': q, 'a': a}
 				Thread(target=handleIkeMessage_catch, args=(id,), daemon=True).start()
 			else:
 				# Append to existing queue
-				thing[id]['q'].append(buf)
+				thing[id]['q'].put(buf)
 				thing[id]['a'] = a
 		except BlockingIOError:
 			sleep(0.01)

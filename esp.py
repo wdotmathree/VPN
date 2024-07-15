@@ -2,8 +2,10 @@
 
 from Crypto.Cipher import AES
 # from Crypto.Hash import SHA256, HMAC
+from queue import Queue, Empty
 from threading import Thread
 from time import sleep
+from typing import Any
 
 import os
 import socket
@@ -14,11 +16,12 @@ import consts
 s: socket = None
 thing = {} # idi: [in_q, a, k, idr, ikeid]
 
+misoq: Queue[tuple[bytes, tuple[str, int]]] = [] # Message queue for IKE messages from esp.py
+mosiq: Queue[dict[str, Any]] = [] # Message queue for message from ike.py
+
 
 def recv(id):
-	while len(thing[id]['in_q']) == 0:
-		sleep(0.1)
-	return thing[id]['in_q'].pop(0)
+	return thing[id]['in_q'].get()
 
 
 def handleIncomingData(id):
@@ -51,7 +54,7 @@ def handleIncomingData_catch(id):
 		if len(thing[id][2]):
 			n = classes.EncryptedPayload(id, [n])
 		nm = classes.Message(id, e.args[1], e.args[2], True, False, [n]).build()
-		misoq.append((nm, thing[id]['a']))
+		misoq.put((nm, thing[id]['a']))
 	print("deleting")
 	del thing[id]
 
@@ -68,18 +71,24 @@ def main(misoq_in, mosiq_in, _):
 
 	while True:
 		try:
-			for msg in mosiq:
+			try:
+				msg = misoq.get_nowait()
+			except Empty:
+				msg = None
+			while msg is not None:
 				print('recieved msg')
-				thing[msg['ispi']] = {'in_q': [], 'a': None, 'ek': msg['ek'], 'ak': msg['ak'], 'idr': msg['rspi'], 'ikeid': msg['id']}
+				thing[msg['ispi']] = {'in_q': Queue(), 'a': None, 'ek': msg['ek'], 'ak': msg['ak'], 'idr': msg['rspi'], 'ikeid': msg['id']}
 				Thread(target=handleIncomingData_catch, args=(msg['ispi'],), daemon=True).start()
-			for i in range(len(mosiq)):
-				mosiq.pop()
+				try:
+					msg = misoq.get_nowait()
+				except Empty:
+					break
 			buf, a = s.recvfrom(65535)
 			buf = buf[20:]
 			id = buf[:4]
 			if id in thing:
 				# Append to existing queue
-				thing[id]['in_q'].append(buf)
+				thing[id]['in_q'].put(buf)
 				thing[id]['a'] = a
 		except BlockingIOError:
 			sleep(0.01)

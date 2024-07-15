@@ -43,7 +43,7 @@ class Payload:
 				break
 			nexttype, critical, length = unpack_from("!BBH", buf)
 			if ptype != consts.IKEV2_PAYLOAD_ENCRYPTED and length > len(buf):
-				raise consts.IKEException(consts.IKEV2_NOTIFY_INVALID_SYNTAX)
+				raise IKEException(consts.IKEV2_NOTIFY_INVALID_SYNTAX)
 			if ptype in payload_map:
 				if ptype == consts.IKEV2_PAYLOAD_ENCRYPTED:
 					res.append(payload_map[ptype].parse(buf[4:length], nexttype, id))
@@ -51,7 +51,7 @@ class Payload:
 					res.append(payload_map[ptype].parse(buf[4:length], id))
 			else:
 				if critical & 0x80:
-					raise consts.IKEException(consts.IKEV2_NOTIFY_CRITICAL_PAYLOAD)
+					raise IKEException(consts.IKEV2_NOTIFY_CRITICAL_PAYLOAD)
 				else:
 					res.append(UnknownPayload(ptype, buf[4:length]))
 			ptype = nexttype
@@ -429,9 +429,9 @@ class Message:
 		id, nextpayload, version, exchange, flags, mid, length = unpack_from("!16sBBBBLL", buf)
 		try:
 			if version & 0xf0 != 0x20:
-				raise consts.IKEException(consts.IKEV2_NOTIFY_INVALID_VERSION, b'\x20')
+				raise IKEException(consts.IKEV2_NOTIFY_INVALID_VERSION, b'\x20')
 			if length != len(buf):
-				raise consts.IKEException(consts.IKEV2_NOTIFY_INVALID_SYNTAX)
+				raise IKEException(consts.IKEV2_NOTIFY_INVALID_SYNTAX)
 			encrypted = nextpayload == consts.IKEV2_PAYLOAD_ENCRYPTED
 			if not encrypted:
 				i = 28
@@ -447,16 +447,30 @@ class Message:
 				mac = buf[-16:]
 				buf = buf[:-16]
 				if HMAC.new(thing[id]['ai'], buf, SHA256).digest()[:16] != mac:
-					raise consts.IKEException(consts.IKEV2_NOTIFY_INVALID_SYNTAX, b'')
+					raise IKEException(consts.IKEV2_NOTIFY_INVALID_SYNTAX, b'')
 
 			res = cls(id, exchange, mid, flags & 0x20 != 0, flags & 0x08 != 0, [])
 			res.children += Payload.parse(buf[28:], nextpayload, id)
 
 			return res
-		except consts.IKEException as e:
-			raise consts.IKEException(e.args, exchange, mid)
+		except IKEException as e:
+			raise IKEException(e.args, exchange, mid)
 
 
 def init_classes(thing_in):
 	global thing
 	thing = thing_in
+
+
+# Exceptions
+class IKEException(Exception):
+	"""
+	Exception raised for errors related to IKE.
+	Often leads to a message being sent back to the peer.
+	"""
+	pass
+
+
+class ESPException(Exception):
+	"""Exception raised for errors related to ESP."""
+	pass
