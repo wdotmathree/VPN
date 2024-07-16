@@ -10,6 +10,7 @@ from typing import Any
 from Crypto.Hash import SHA256, HMAC
 
 import os
+import sys
 
 import classes
 import consts
@@ -235,7 +236,7 @@ def handleIkeMessage(id):
 		# 	tmp.children = tmp.children[0].children
 		# 	s.sendto(tmp.build(), ("::ffff:192.168.0.1", 500))
 		if stage != consts.IKE_IDLE and m.exchange != stage:
-			print("Wrong data")
+			print("(handleIkeMessage) Wrong data", file=sys.stderr)
 			raise classes.IKEException((consts.IKEV2_NOTIFY_INVALID_SYNTAX, b''), m.exchange, m.mid)
 		if stage == consts.IKE_SA_INIT:
 			stage = sa_initStage(id, m)
@@ -257,7 +258,7 @@ def handleIkeMessage_catch(id):
 			n = classes.EncryptedPayload(id, [n])
 		nm = classes.Message(id, e.args[1], e.args[2], True, False, [n]).build()
 		s.sendto(nm, thing[id]['a'])
-	print("deleting")
+	print("(handleIkeMessage_catch) deleting", file=sys.stderr)
 	del thing[id]
 
 
