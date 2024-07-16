@@ -5,7 +5,7 @@ from Crypto.Cipher import AES
 from queue import Queue, Empty
 from threading import Thread
 from time import sleep
-from typing import Any
+from typing import Any, Union
 
 import os
 import socket
@@ -13,11 +13,13 @@ import socket
 import classes
 import consts
 
-s: socket = None
-thing = {} # idi: [in_q, a, k, idr, ikeid]
 
-misoq: Queue[tuple[bytes, tuple[str, int]]] = [] # Message queue for IKE messages from esp.py
-mosiq: Queue[dict[str, Any]] = [] # Message queue for message from ike.py
+s: socket = None
+thing: dict[bytes, dict[bytes, Union[Queue, bytes]]] = None # idi: [in_q, a, k, idr, ikeid]
+
+misoq: Queue[tuple[bytes, tuple[str, int]]] = None # Message queue for IKE messages from esp.py
+mosiq: Queue[dict[str, Any]] = None # Message queue for message from ike.py
+forwardq: Queue[tuple[bytes, int, bytes]] = None # Message queue for message from esp.py to forward.py
 
 
 def recv(id):
@@ -38,9 +40,11 @@ def handleIncomingData(id):
 		nextHead = dec[-1]
 		padlen = dec[-2]
 		dec = dec[:-(padlen + 2)]
+		if nextHead == 59: # Dummy packet
+			continue
 
 		# Pass to transport layer processing
-		# TODO: Implement
+		forwardq.put((id, nextHead, dec))
 
 
 def handleIncomingData_catch(id):
@@ -59,28 +63,27 @@ def handleIncomingData_catch(id):
 	del thing[id]
 
 
-def main(misoq_in, mosiq_in, _):
-	global s, misoq, mosiq
+def main(misoq_in, mosiq_in, thing_in, forwardq_in):
+	global s, misoq, mosiq, thing, forwardq
 	if os.getuid():
 		s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
 		s.bind(("::", 5000))
 	else:
 		s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ESP)
 	s.setblocking(0)
-	misoq, mosiq = misoq_in, mosiq_in
+	misoq, mosiq, thing, forwardq = misoq_in, mosiq_in, thing_in, forwardq_in
 
 	while True:
 		try:
 			try:
-				msg = misoq.get_nowait()
+				msg = mosiq.get_nowait()
 			except Empty:
 				msg = None
 			while msg is not None:
-				print('recieved msg')
 				thing[msg['ispi']] = {'in_q': Queue(), 'a': None, 'ek': msg['ek'], 'ak': msg['ak'], 'idr': msg['rspi'], 'ikeid': msg['id']}
 				Thread(target=handleIncomingData_catch, args=(msg['ispi'],), daemon=True).start()
 				try:
-					msg = misoq.get_nowait()
+					msg = mosiq.get_nowait()
 				except Empty:
 					break
 			buf, a = s.recvfrom(65535)
@@ -91,4 +94,4 @@ def main(misoq_in, mosiq_in, _):
 				thing[id]['in_q'].put(buf)
 				thing[id]['a'] = a
 		except BlockingIOError:
-			sleep(0.01)
+			sleep(0.001)

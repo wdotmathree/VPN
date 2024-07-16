@@ -16,8 +16,8 @@ import consts
 
 s: socket = None
 
-misoq: list[tuple[bytes, tuple[str, int]]] = [] # Message queue for IKE messages from esp.py
-mosiq: list[dict[str, Any]] = [] # Message queue for message from ike.py
+misoq: list[tuple[bytes, tuple[str, int]]] = None # Message queue for IKE messages from esp.py
+mosiq: list[dict[str, Any]] = None # Message queue for message from ike.py
 thing: dict[bytes, tuple[list[bytes]]] = {}
 
 
@@ -261,12 +261,12 @@ def handleIkeMessage_catch(id):
 	del thing[id]
 
 
-def main(misoq_in, mosiq_in, thing_in):
-	global s, misoq, mosiq, thing
+def main(misoq_in, mosiq_in):
+	global s, misoq, mosiq
 	s = socket(AF_INET6, SOCK_DGRAM)
 	s.bind(("::", 4500 if os.getuid() else 500))
 	s.setblocking(0)
-	misoq, mosiq, thing = misoq_in, mosiq_in, thing_in
+	misoq, mosiq = misoq_in, mosiq_in
 	classes.init_classes(thing)
 
 	while True:
@@ -297,4 +297,4 @@ def main(misoq_in, mosiq_in, thing_in):
 				thing[id]['q'].put(buf)
 				thing[id]['a'] = a
 		except BlockingIOError:
-			sleep(0.01)
+			sleep(0.001)
